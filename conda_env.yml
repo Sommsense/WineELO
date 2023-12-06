@@ -1,0 +1,14 @@
+name: wine_elo
+
+channels:
+  - defaults
+  - conda-forge # Usually more up-to-date than 'defaults'
+
+dependencies:
+  # Pinning the Python and pip version for better reproducibility
+  - python=3.11
+  - pip=23.3
+
+  # Using pip for packages not available in Conda channels
+  - pip:
+      - -r requirements.txt

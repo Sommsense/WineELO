@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 import numpy as np
 from itertools import combinations
 pd.set_option('mode.chained_assignment', None)
-
+from .chessratings import uscf_elo
 import numpy as np
 from datetime import date
 from collections import Counter
@@ -585,7 +585,7 @@ def compute_date(scrape_date, review_date, review_time_ago):
 
 def clean_wine_reviews(review_df):
 
-    review_df['final_review_date'] = review_df.apply(lambda x: compute_date(
+    review_df['review_date'] = review_df.apply(lambda x: compute_date(
         x['scrape_date'], x['review_date'], x['review_time_ago']), axis=1)
 
     # drop any reviews that don't have a vintage specified. N.V. is acceptable, but blank vintage is not.
@@ -593,7 +593,7 @@ def clean_wine_reviews(review_df):
     review_df.dropna(subset=['vintage'], axis=0, inplace=True)
 
     just_reviews = review_df[['wine_id',
-                              'reviewer', 'rating', 'final_review_date']]
+                              'reviewer', 'rating', 'review_date']]
     return just_reviews
 
 
@@ -641,10 +641,55 @@ def match_format(combo, review_table):
         return match_result
 
 
+def run_single_tournaments(r, review_df, score_lookup_table):
+
+    review_df_date = review_df.loc[review_df['review_date'] == r]
+    reviewers = sorted(list(set(review_df_date['reviewer'])))
+    for u in reviewers:
+        review_df_slice = review_df_date.loc[review_df_date['reviewer'] == u]
+        # In some rare cases, an individual may have rated an individual wine more than once in one day. In this case, we eliminate one of these reviews
+        review_df_slice = review_df_slice[~review_df_slice.index.duplicated(
+            keep='first')]
+
+        players = []
+        unique_players = list(set(review_df_slice.index))
+
+        for up in unique_players:
+            rating, tournament_number, nr_games_played, nr_wins, nr_losses = player_info_lookup(
+                up, score_lookup_table)
+            p = uscf_elo.Player(up, rating, nr_games_played,
+                                nr_wins, nr_losses, tournament_number)
+            players.append(p)
+
+        combos = list(combinations(review_df_slice.index, 2))
+        tournament_results = []
+        for c in combos:
+            match_result = match_format(c, review_df_slice)
+            tournament_results.append(match_result)
+
+        tournament = uscf_elo.Tournament(
+            players=players, tournament_results=tournament_results, tournament_date=r)
+        if tournament.valid_tournament:
+            try:
+                updated_scores = tournament.run()
+                updated_scores_with_reviewer = [
+                    v + [u] for v in updated_scores]
+
+                score_lookup_entry_table = pd.DataFrame(updated_scores_with_reviewer, columns=[
+                                                        'wine_id', 'tournament_date', 'tournament_number', 'nr_games_played', 'nr_wins', 'nr_draws', 'nr_losses', 'elo_rating', 'reviewer'])
+                score_lookup_table = score_lookup_table.append(
+                    score_lookup_entry_table)
+            except:
+                continue
+
+
+
 def run_tournaments(review_df, score_lookup_table):
-    review_dates = sorted(list(set(review_df['final_review_date'])))
+    review_dates = sorted(list(set(review_df['review_date'])))
+
     for r in review_dates:
-        review_df_date = review_df.loc[review_df['final_review_date'] == r]
+
+        review_df_date = review_df.loc[review_df['review_date'] == r]
         reviewers = sorted(list(set(review_df_date['reviewer'])))
         for u in reviewers:
             review_df_slice = review_df_date.loc[review_df_date['reviewer'] == u]
